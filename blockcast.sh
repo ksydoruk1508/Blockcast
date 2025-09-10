@@ -17,7 +17,7 @@ display_logo() {
 | . ` |/ _ \ / _` |    \ \ '__|
 | |\  | (_) | (_| |.___/ / |   
 \_| \_/\___/ \__,_|\____/|_|
-          Aztec
+          Blockcast
  Канал: https://t.me/NodesN3R
 EOF
 }
