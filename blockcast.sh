@@ -25,15 +25,15 @@ EOF
 # -----------------------------
 # Colors
 # -----------------------------
-clrGreen=$'\033[0;32m'
-clrCyan=$'\033[0;36m'
-clrBlue=$'\033[0;34m'
-clrRed=$'\033[0;31m'
-clrYellow=$'\033[1;33m'
-clrMag=$'\033[1;35m'
-clrReset=$'\033[0m'
-clrBold=$'\033[1m'
-clrDim=$'\033[2m'
+clrGreen=$'[0;32m'
+clrCyan=$'[0;36m'
+clrBlue=$'[0;34m'
+clrRed=$'[0;31m'
+clrYellow=$'[1;33m'
+clrMag=$'[1;35m'
+clrReset=$'[0m'
+clrBold=$'[1m'
+clrDim=$'[2m'
 
 ok()    { echo -e "${clrGreen}[OK]${clrReset} ${*:-}"; }
 info()  { echo -e "${clrCyan}[INFO]${clrReset} ${*:-}"; }
@@ -58,13 +58,21 @@ ALT_PORT="8080"        # legacy port in some readme examples
 IMAGE_REPO="blockcast/cdn_gateway_go"
 IMAGE_TAG="stable"
 
+# Private key common paths (we'll pick the first that exists)
+KEY_CANDIDATES=(
+  "$HOME/.blockcast/certs/gw_challenge.key"
+  "$HOME/certs/gateway.key"
+  "$HOME/.blockcast/certs/gateway.key"
+)
+
 # -----------------------------
 # Language (RU/EN)
 # -----------------------------
 LANG_CHOICE="ru"
 choose_language() {
   clear; display_logo
-  echo -e "\n${clrBold}${clrMag}Select language / Выберите язык${clrReset}"
+  echo -e "
+${clrBold}${clrMag}Select language / Выберите язык${clrReset}"
   echo -e "${clrDim}1) Русский${clrReset}"
   echo -e "${clrDim}2) English${clrReset}"
   read -rp "> " ans
@@ -107,9 +115,10 @@ tr() {
         m5_logs) echo "Follow logs" ;;
         m6_register) echo "Registration helper (blockcastd init)" ;;
         m7_status) echo "Show docker status" ;;
-        m8_remove) echo "Remove node (FULL)" ;;
-        m9_lang) echo "Change language / Сменить язык" ;;
-        m10_exit) echo "Exit" ;;
+        m8_backup) echo "Backup private key" ;;
+        m9_remove) echo "Remove node (FULL)" ;;
+        m10_lang) echo "Change language / Сменить язык" ;;
+        m11_exit) echo "Exit" ;;
         press_enter) echo "Press Enter to return to menu..." ;;
         need_root_warn) echo "Some steps require sudo/root. You'll be prompted when needed." ;;
         docker_missing) echo "Docker is not available. Please run the one-click setup first." ;;
@@ -123,6 +132,8 @@ tr() {
         reg_hint) echo "Running 'docker compose exec blockcastd blockcastd init'..." ;;
         reg_url) echo "Registration URL:" ;;
         city_hint) echo "Your detected location (city/region/country/loc):" ;;
+        backup_done) echo "Key backed up to:" ;;
+        backup_fail) echo "Key file not found. Run registration first." ;;
       esac ;;
     *)
       case "$k" in
@@ -154,9 +165,10 @@ tr() {
         m5_logs) echo "Смотреть логи" ;;
         m6_register) echo "Регистрация (blockcastd init)" ;;
         m7_status) echo "Статус контейнеров" ;;
-        m8_remove) echo "Удалить ноду (полностью)" ;;
-        m9_lang) echo "Сменить язык / Change language" ;;
-        m10_exit) echo "Выход" ;;
+        m8_backup) echo "Сделать бэкап приватного ключа" ;;
+        m9_remove) echo "Удалить ноду (полностью)" ;;
+        m10_lang) echo "Сменить язык / Change language" ;;
+        m11_exit) echo "Выход" ;;
         press_enter) echo "Нажмите Enter для возврата в меню..." ;;
         need_root_warn) echo "Некоторые шаги требуют sudo/root. Права попросят по ходу." ;;
         docker_missing) echo "Docker недоступен. Сначала выполните быструю установку." ;;
@@ -170,6 +182,8 @@ tr() {
         reg_hint) echo "Выполняю 'docker compose exec blockcastd blockcastd init'..." ;;
         reg_url) echo "Ссылка для регистрации:" ;;
         city_hint) echo "Определённая геолокация (city/region/country/loc):" ;;
+        backup_done) echo "Ключ сохранён в:" ;;
+        backup_fail) echo "Файл ключа не найден. Сначала выполните регистрацию." ;;
       esac ;;
   esac
 }
@@ -352,9 +366,29 @@ register_node() {
   URL=$(grep -Eo 'https?://[^ ]+' "$TMP" | head -n1 || true)
   rm -f "$TMP"
   if [[ -n "$URL" ]]; then
-    printf "%s %b%s%b\n" "$(tr reg_url)" "$clrBlue" "$URL" "$clrReset"
+    printf "%s %b%s%b
+" "$(tr reg_url)" "$clrBlue" "$URL" "$clrReset"
   fi
   return $ec
+}
+
+# -----------------------------
+# Backup private key
+# -----------------------------
+backup_private_key() {
+  local src=""
+  for p in "${KEY_CANDIDATES[@]}"; do
+    if [[ -f "$p" ]]; then src="$p"; break; fi
+  done
+  if [[ -z "$src" ]]; then err "$(tr backup_fail)"; return 1; fi
+  local dest_dir="$BC_DIR/backup"
+  mkdir -p "$dest_dir"
+  local ts; ts=$(date +%Y%m%d_%H%M%S)
+  local base; base=$(basename "$src")
+  local dest="$dest_dir/${base}.${ts}"
+  cp -f "$src" "$dest"
+  chmod 600 "$dest" || true
+  ok "$(tr backup_done) $dest"
 }
 
 # -----------------------------
@@ -387,14 +421,15 @@ remove_node() {
 }
 
 # -----------------------------
-# Main menu (renumbered without options 8 and 9)
+# Main menu (with backup option added)
 # -----------------------------
 main_menu() {
   choose_language
   info "$(tr need_root_warn)" || true
   while true; do
     clear; display_logo; hr
-    echo -e "${clrBold}${clrMag}$(tr menu_title)${clrReset} ${clrDim}(v${SCRIPT_VERSION})${clrReset}\n"
+    echo -e "${clrBold}${clrMag}$(tr menu_title)${clrReset} ${clrDim}(v${SCRIPT_VERSION})${clrReset}
+"
     echo -e "${clrGreen}1)${clrReset} $(tr m1_bootstrap)"
     echo -e "${clrGreen}2)${clrReset} $(tr m2_create)"
     echo -e "${clrGreen}3)${clrReset} $(tr m3_start)"
@@ -402,9 +437,10 @@ main_menu() {
     echo -e "${clrGreen}5)${clrReset} $(tr m5_logs)"
     echo -e "${clrGreen}6)${clrReset} $(tr m6_register)"
     echo -e "${clrGreen}7)${clrReset} $(tr m7_status)"
-    echo -e "${clrGreen}8)${clrReset} $(tr m8_remove)"
-    echo -e "${clrGreen}9)${clrReset} $(tr m9_lang)"
-    echo -e "${clrGreen}10)${clrReset} $(tr m10_exit)"
+    echo -e "${clrGreen}8)${clrReset} $(tr m8_backup)"
+    echo -e "${clrGreen}9)${clrReset} $(tr m9_remove)"
+    echo -e "${clrGreen}10)${clrReset} $(tr m10_lang)"
+    echo -e "${clrGreen}11)${clrReset} $(tr m11_exit)"
     hr
     read -rp "> " choice
     case "${choice:-}" in
@@ -415,12 +451,14 @@ main_menu() {
       5) show_logs ;;
       6) register_node ;;
       7) show_status ;;
-      8) remove_node ;;
-      9) choose_language ;;
-      10) exit 0 ;;
+      8) backup_private_key ;;
+      9) remove_node ;;
+      10) choose_language ;;
+      11) exit 0 ;;
       *) ;;
     esac
-    echo -e "\n$(tr press_enter)"; read -r
+    echo -e "
+$(tr press_enter)"; read -r
   done
 }
 
