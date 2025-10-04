@@ -447,13 +447,65 @@ change_port(){
 # Full removal
 # -----------------------------
 remove_all(){
+  # Полное «сносит всё». Сначала обычное подтверждение:
   read -rp "$(tr remove) " CONF
   [[ "$CONF" == "yes" ]] || { warn "Canceled."; return 0; }
+
+  set +e
+
+  # 1) Гасим стек в обоих возможных местах и удаляем «осиротевшее»
   (cd "$COMPOSE_HOME" 2>/dev/null && docker compose down -v --remove-orphans) || true
+  (cd "$OLD_DIR"      2>/dev/null && docker compose down -v --remove-orphans) || true
+
+  # 2) Явные имена контейнеров из стека
   docker rm -f blockcastd control_proxy beacond watchtower 2>/dev/null || true
-  docker images 'blockcast/cdn_gateway_go' -q | xargs -r docker rmi -f
-  rm -rf "$COMPOSE_HOME"
-  ok "$(tr removed)"
+
+  # 3) Удаляем всё, что собрано docker compose для проектов по именам каталогов
+  #    Обычно это 'compose' (для ~/.blockcast/compose) и 'blockcast' (для ~/blockcast)
+  for prj in "$(basename "$COMPOSE_HOME")" "blockcast"; do
+    docker ps -a      --filter "label=com.docker.compose.project=${prj}" -q | xargs -r docker rm -f || true
+    docker network ls --filter "label=com.docker.compose.project=${prj}" -q | xargs -r docker network rm || true
+    docker volume ls  --filter "label=com.docker.compose.project=${prj}" -q | xargs -r docker volume rm -f || true
+    # На всякий случай: некоторые образы тоже могут нести compose-лейбл
+    docker images     --filter "label=com.docker.compose.project=${prj}" -q | xargs -r docker rmi -f || true
+  done
+
+  # 4) Удаляем контейнеры, которые держат нужный порт на хосте (обычно 8443)
+  for p in "${HOST_PORT}" 8443; do
+    docker ps --filter "publish=${p}" -q | xargs -r docker rm -f || true
+  done
+
+  # 5) Добиваем известные сети (если остались без лейблов)
+  docker network rm compose_default 2>/dev/null || true
+  docker network rm blockcast_default 2>/dev/null || true
+
+  # 6) Образы Blockcast и Watchtower/Updater
+  docker images 'blockcast/*' -q                | xargs -r docker rmi -f || true
+  docker images 'blockcast/blockcastd-updater' -q | xargs -r docker rmi -f || true
+  docker images 'containrrr/watchtower' -q      | xargs -r docker rmi -f || true
+
+  # 7) Чистим каталоги compose (новый и старый макеты)
+  rm -rf "$COMPOSE_HOME" "$OLD_DIR"
+
+  set -e
+
+  # 8) Отдельным подтверждением — удаление всей ~/.blockcast (КЛЮЧИ БУДУТ УТЕРЯНЫ!)
+  read -rp "Also delete ~/.blockcast (this WILL delete keys; you may need to re-register)? Type 'DELETE' to confirm: " DELK
+  if [[ "$DELK" == "DELETE" ]]; then
+    rm -rf "$HOME/.blockcast"
+    if [[ "$LANG" == "en" ]]; then
+      ok "Blockcast removed (including keys)."
+    else
+      ok "Blockcast удалён (включая ключи)."
+    fi
+  else
+    ok "$(tr removed)"  # «Blockcast removed (keys kept).»
+  fi
+
+  # 9) Финальная проверка, что порт свободен
+  if docker ps --filter "publish=${HOST_PORT}" -q | grep -q .; then
+    warn "Port ${HOST_PORT} is still published by some container."
+  fi
 }
 
 # -----------------------------
