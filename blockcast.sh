@@ -1,31 +1,24 @@
 #!/usr/bin/env bash
 # =====================================================================
 # Blockcast BEACON — Installer/Manager (RU/EN), per official guide
-# Docs: https://docs.blockcast.network/main/getting-started/how-do-i-participate-in-the-network/beacon/start-running-your-beacon-today
-# Repo: https://github.com/Blockcast/beacon-docker-compose
-# Target: Ubuntu/Debian. Requires sudo for installs.
-# Version: 2.1.0
+# Docs:  https://docs.blockcast.network/main/getting-started/how-do-i-participate-in-the-network/beacon/start-running-your-beacon-today
+# Repo:  https://github.com/Blockcast/beacon-docker-compose
+# Target: Ubuntu/Debian (needs sudo for installs)
+# Version: 2.2.0
 # =====================================================================
 set -Eeuo pipefail
 
 # -----------------------------
 # Colors / UI
 # -----------------------------
-cG=$'\033[0;32m'
-cC=$'\033[0;36m'
-cB=$'\033[0;34m'
-cR=$'\033[0;31m'
-cY=$'\033[1;33m'
-cM=$'\033[1;35m'
-c0=$'\033[0m'
-cBold=$'\033[1m'
-cDim=$'\033[2m'
+cG=$'\033[0;32m'; cC=$'\033[0;36m'; cB=$'\033[0;34m'; cR=$'\033[0;31m'
+cY=$'\033[1;33m'; cM=$'\033[1;35m'; c0=$'\033[0m'; cBold=$'\033[1m'; cDim=$'\033[2m'
 
-ok(){   echo -e "${cG}[OK]${c0} ${*}"; }
-info(){ echo -e "${cC}[INFO]${c0} ${*}"; }
-warn(){ echo -e "${cY}[WARN]${c0} ${*}"; }
-err(){  echo -e "${cR}[ERROR]${c0} ${*}"; }
-hr(){   echo -e "${cDim}────────────────────────────────────────────────────────${c0}"; }
+ok()   { echo -e "${cG}[OK]${c0} ${*}"; }
+info() { echo -e "${cC}[INFO]${c0} ${*}"; }
+warn() { echo -e "${cY}[WARN]${c0} ${*}"; }
+err()  { echo -e "${cR}[ERROR]${c0} ${*}"; }
+hr()   { echo -e "${cDim}────────────────────────────────────────────────────────${c0}"; }
 
 logo(){ cat <<'EOF'
  _   _           _  _____      
@@ -42,22 +35,25 @@ EOF
 # -----------------------------
 # Paths / Config
 # -----------------------------
-SCRIPT_VERSION="2.1.0"
-REPO_URL="https://github.com/Blockcast/beacon-docker-compose"
+SCRIPT_VERSION="2.2.0"
+REPO_RAW_YML="https://raw.githubusercontent.com/Blockcast/beacon-docker-compose/refs/heads/main/docker-compose.yml"
 
-BC_DIR="$HOME/blockcast"
-ENV_FILE="$BC_DIR/.env"
-COMPOSE_FILE="$BC_DIR/docker-compose.yml"
+COMPOSE_HOME="$HOME/.blockcast/compose"
+COMPOSE_FILE="$COMPOSE_HOME/docker-compose.yml"
+OVERRIDE_FILE="$COMPOSE_HOME/docker-compose.override.yml"
 
-# По вашему требованию видим 0.0.0.0:8443->8080/tcp у blockcastd
+# Порт на хосте -> порт в контейнере (TLS-фронт beacond слушает 8080)
 HOST_PORT="${HOST_PORT:-8443}"
 CONTAINER_PORT="8080"
+
+# Старый путь (для авто-миграции, если ранее использовали ~/blockcast)
+OLD_DIR="$HOME/blockcast"
 
 # Ключи
 KEY_DIR="$HOME/.blockcast/certs"
 KEY_FILE="$KEY_DIR/gw_challenge.key"
 LEGACY_KEY="$KEY_DIR/gateway.key"
-BACKUP_DIR="$BC_DIR/backup"
+BACKUP_DIR="$HOME/blockcast/backup"
 
 # -----------------------------
 # Language (RU/EN)
@@ -78,47 +74,49 @@ tr(){
   local k="${1:-}"; [[ -z "$k" ]] && return 0
   if [[ "$LANG" == "en" ]]; then
     case "$k" in
-      need_root) echo "Some steps need sudo/root." ;;
-      fixing) echo "Fixing APT repos (cross-arch) and installing base deps..." ;;
-      deps_done) echo "Base deps installed." ;;
-      docker) echo "Installing Docker Engine + compose plugin..." ;;
-      docker_ok) echo "Docker ready." ;;
-      ufw) echo "Configuring UFW (firewall)..." ;;
-      ufw_ok) echo "Firewall rules applied." ;;
-      ask_port) echo "Enter public port to expose on blockcastd (default 8443 -> container 8080):" ;;
-      fetch) echo "Preparing folder and fetching official compose..." ;;
-      repo_ok) echo "Fetched docker-compose.yml from official repo." ;;
-      patch_ports) echo "Ensuring ${HOST_PORT}:${CONTAINER_PORT} published on service 'blockcastd'..." ;;
-      remove_watchtower_port) echo "Removing accidental port mapping from 'watchtower'..." ;;
-      start) echo "Starting services (docker compose up -d)..." ;;
-      started) echo "Services started." ;;
-      restart) echo "Restarting services..." ;;
-      restarted) echo "Services restarted." ;;
-      logs) echo "Following logs (Ctrl+C to stop)..." ;;
-      reg) echo "Running 'docker compose exec blockcastd blockcastd init'..." ;;
-      reg_hwid) echo "Hardware ID:" ;;
-      reg_ck) echo "Challenge Key:" ;;
-      reg_url) echo "Registration URL:" ;;
-      loc_hint) echo "Your IP geolocation (city/region/country/loc):" ;;
-      backup) echo "Backing up private key..." ;;
-      backup_done) echo "Key backed up to:" ;;
-      backup_miss) echo "Key file not found. Run registration first." ;;
-      status) echo "Docker status:" ;;
-      change_port) echo "Changing published port and recreating containers..." ;;
-      remove) echo "Full removal (containers/images/folder). Type 'yes' to confirm:" ;;
-      removed) echo "Blockcast removed (keys kept)." ;;
-      menu) echo "Blockcast BEACON — installer & manager" ;;
-      press) echo "Press Enter to return to menu..." ;;
-      compose_invalid) echo "docker-compose.yml failed to validate. Check syntax above." ;;
-      conflicts) echo "Removing old containers with conflicting names..." ;;
-      compose_missing) echo "docker-compose.yml not found in the official repo." ;;
-      dir_missing) echo "Directory not found:" ;;
-      svc_blockcastd_missing) echo "Service 'blockcastd' not found — skipping port patch." ;;
-
+      need_root)             echo "Some steps need sudo/root." ;;
+      fixing)                echo "Fixing APT repos (cross-arch) and installing base deps..." ;;
+      deps_done)             echo "Base deps installed." ;;
+      docker)                echo "Installing Docker Engine + compose plugin..." ;;
+      docker_ok)             echo "Docker ready." ;;
+      ufw)                   echo "Configuring UFW (firewall)..." ;;
+      ufw_ok)                echo "Firewall rules applied." ;;
+      ask_port)              echo "Enter public port for blockcastd (default 8443 -> container 8080):" ;;
+      fetch)                 echo "Preparing compose directory and fetching official compose..." ;;
+      compose_home_ready)    echo "Compose directory is ready:" ;;
+      repo_ok)               echo "Fetched docker-compose.yml from official repo." ;;
+      repo_fail)             echo "Failed to fetch docker-compose.yml from official repo." ;;
+      migrated_old)          echo "Found old compose in ~/blockcast, migrating to ~/.blockcast/compose..." ;;
+      override_write)        echo "Writing override to publish ${HOST_PORT}:${CONTAINER_PORT} on 'blockcastd'..." ;;
+      override_ok)           echo "Override file written." ;;
+      override_skip_wt)      echo "No 'watchtower' service in base compose, skipping ports cleanup for it." ;;
+      validate)              echo "Validating compose (base + override)..." ;;
+      compose_invalid)       echo "Compose validation failed. Check the printed config and fix errors above." ;;
+      conflicts)             echo "Removing old containers with conflicting names..." ;;
+      port_conflicts)        echo "Removing containers publishing port ${HOST_PORT}..." ;;
+      start)                 echo "Starting services (docker compose up -d)..." ;;
+      started)               echo "Services started." ;;
+      restart)               echo "Restarting services (force-recreate)..." ;;
+      restarted)             echo "Services restarted." ;;
+      logs)                  echo "Following logs (Ctrl+C to stop)..." ;;
+      status)                echo "Docker status:" ;;
+      reg)                   echo "Running 'docker compose exec blockcastd blockcastd init'..." ;;
+      reg_hwid)              echo "Hardware ID:" ;;
+      reg_ck)                echo "Challenge Key:" ;;
+      reg_url)               echo "Registration URL:" ;;
+      loc_hint)              echo "Your IP geolocation (city/region/country/loc):" ;;
+      backup)                echo "Backing up private key..." ;;
+      backup_done)           echo "Key backed up to:" ;;
+      backup_miss)           echo "Key file not found. Run registration first." ;;
+      remove)                echo "Full removal (containers/images/folders). Type 'yes' to confirm:" ;;
+      removed)               echo "Blockcast removed (keys kept)." ;;
+      dir_missing)           echo "Directory not found:" ;;
+      press)                 echo "Press Enter to return to menu..." ;;
       # menu items
+      menu)                  echo "Blockcast BEACON — installer & manager" ;;
       m1) echo "Install deps (APT fix) and Docker" ;;
       m2) echo "Configure firewall (UFW) and open port" ;;
-      m3) echo "Fetch official compose and patch ports" ;;
+      m3) echo "Fetch official compose (into ~/.blockcast/compose) and write override" ;;
       m4) echo "Start (docker compose up -d)" ;;
       m5) echo "Restart (force-recreate)" ;;
       m6) echo "Registration (blockcastd init)" ;;
@@ -132,47 +130,49 @@ tr(){
     esac
   else
     case "$k" in
-      need_root) echo "Некоторые шаги требуют sudo/root." ;;
-      fixing) echo "Чиню APT-репозитории (кросс-арх) и устанавливаю базовые зависимости..." ;;
-      deps_done) echo "Базовые зависимости установлены." ;;
-      docker) echo "Ставлю Docker Engine + compose-плагин..." ;;
-      docker_ok) echo "Docker готов." ;;
-      ufw) echo "Настраиваю UFW (фаервол)..." ;;
-      ufw_ok) echo "Правила фаервола применены." ;;
-      ask_port) echo "Введите внешний порт, публикуемый у blockcastd (по умолчанию 8443 -> контейнер 8080):" ;;
-      fetch) echo "Готовлю каталог и забираю официальный compose..." ;;
-      repo_ok) echo "Получен docker-compose.yml из официального репозитория." ;;
-      patch_ports) echo "Гарантирую публикацию ${HOST_PORT}:${CONTAINER_PORT} у сервиса 'blockcastd'..." ;;
-      remove_watchtower_port) echo "Убираю лишний проброс порта из 'watchtower'..." ;;
-      start) echo "Запускаю сервисы (docker compose up -d)..." ;;
-      started) echo "Сервисы запущены." ;;
-      restart) echo "Перезапускаю сервисы..." ;;
-      restarted) echo "Сервисы перезапущены." ;;
-      logs) echo "Показываю логи (Ctrl+C для выхода)..." ;;
-      reg) echo "Выполняю 'docker compose exec blockcastd blockcastd init'..." ;;
-      reg_hwid) echo "Hardware ID:" ;;
-      reg_ck) echo "Challenge Key:" ;;
-      reg_url) echo "Ссылка для регистрации:" ;;
-      loc_hint) echo "Геолокация по IP (city/region/country/loc):" ;;
-      backup) echo "Делаю бэкап приватного ключа..." ;;
-      backup_done) echo "Ключ сохранён в:" ;;
-      backup_miss) echo "Файл ключа не найден. Сначала выполните регистрацию." ;;
-      status) echo "Статус Docker:" ;;
-      change_port) echo "Меняю публикуемый порт и пересоздаю контейнеры..." ;;
-      remove) echo "Полное удаление (контейнеры/образы/папка). Введите 'yes' для подтверждения:" ;;
-      removed) echo "Blockcast удалён (ключи сохранены)." ;;
-      menu) echo "Blockcast BEACON — установщик и менеджер" ;;
-      press) echo "Нажмите Enter для возврата в меню..." ;;
-      compose_invalid) echo "docker-compose.yml не валиден. Проверьте синтаксис выше." ;;
-      conflicts) echo "Удаляю старые контейнеры с конфликтующими именами..." ;;
-      compose_missing) echo "В официальном репозитории не найден docker-compose.yml." ;;
-      dir_missing) echo "Каталог не найден:" ;;
-      svc_blockcastd_missing) echo "Сервис 'blockcastd' не найден — пропуск патча портов." ;;
-
+      need_root)             echo "Некоторые шаги требуют sudo/root." ;;
+      fixing)                echo "Чиню APT-репозитории (кросс-арх) и устанавливаю базовые зависимости..." ;;
+      deps_done)             echo "Базовые зависимости установлены." ;;
+      docker)                echo "Ставлю Docker Engine + compose-плагин..." ;;
+      docker_ok)             echo "Docker готов." ;;
+      ufw)                   echo "Настраиваю UFW (фаервол)..." ;;
+      ufw_ok)                echo "Правила фаервола применены." ;;
+      ask_port)              echo "Введите внешний порт для blockcastd (по умолчанию 8443 -> контейнер 8080):" ;;
+      fetch)                 echo "Готовлю каталог compose и скачиваю официальный compose..." ;;
+      compose_home_ready)    echo "Каталог compose готов:" ;;
+      repo_ok)               echo "Получен docker-compose.yml из официального репозитория." ;;
+      repo_fail)             echo "Не удалось получить docker-compose.yml из официального репозитория." ;;
+      migrated_old)          echo "Найден старый compose в ~/blockcast — мигрирую в ~/.blockcast/compose..." ;;
+      override_write)        echo "Записываю override для публикации ${HOST_PORT}:${CONTAINER_PORT} у 'blockcastd'..." ;;
+      override_ok)           echo "Override-файл записан." ;;
+      override_skip_wt)      echo "Сервиса 'watchtower' нет в базовом compose — пропускаю чистку его портов." ;;
+      validate)              echo "Проверяю конфигурацию (base + override)..." ;;
+      compose_invalid)       echo "Валидация compose не прошла. Проверьте напечатанный конфиг и исправьте ошибки." ;;
+      conflicts)             echo "Удаляю контейнеры с конфликтующими именами..." ;;
+      port_conflicts)        echo "Удаляю контейнеры, публикующие порт ${HOST_PORT}..." ;;
+      start)                 echo "Запускаю сервисы (docker compose up -d)..." ;;
+      started)               echo "Сервисы запущены." ;;
+      restart)               echo "Перезапускаю сервисы (force-recreate)..." ;;
+      restarted)             echo "Сервисы перезапущены." ;;
+      logs)                  echo "Показываю логи (Ctrl+C для выхода)..." ;;
+      status)                echo "Статус Docker:" ;;
+      reg)                   echo "Выполняю 'docker compose exec blockcastd blockcastd init'..." ;;
+      reg_hwid)              echo "Hardware ID:" ;;
+      reg_ck)                echo "Challenge Key:" ;;
+      reg_url)               echo "Ссылка для регистрации:" ;;
+      loc_hint)              echo "Геолокация по IP (city/region/country/loc):" ;;
+      backup)                echo "Делаю бэкап приватного ключа..." ;;
+      backup_done)           echo "Ключ сохранён в:" ;;
+      backup_miss)           echo "Файл ключа не найден. Сначала выполните регистрацию." ;;
+      remove)                echo "Полное удаление (контейнеры/образы/папки). Введите 'yes' для подтверждения:" ;;
+      removed)               echo "Blockcast удалён (ключи сохранены)." ;;
+      dir_missing)           echo "Каталог не найден:" ;;
+      press)                 echo "Нажмите Enter для возврата в меню..." ;;
       # пункты меню
+      menu)                  echo "Blockcast BEACON — установщик и менеджер" ;;
       m1) echo "Установить зависимости (APT fix) и Docker" ;;
       m2) echo "Настроить фаервол (UFW) и открыть порт" ;;
-      m3) echo "Загрузить официальный compose и пропатчить порты" ;;
+      m3) echo "Загрузить официальный compose (в ~/.blockcast/compose) и написать override" ;;
       m4) echo "Запустить (docker compose up -d)" ;;
       m5) echo "Перезапустить (force-recreate)" ;;
       m6) echo "Регистрация (blockcastd init)" ;;
@@ -198,7 +198,7 @@ run(){ if [[ $(id -u) -ne 0 ]]; then sudo bash -lc "$*"; else bash -lc "$*"; fi;
 # -----------------------------
 # APT: cross-arch repo fix + deps
 # -----------------------------
-get_codename() {
+get_codename(){
   if command -v lsb_release >/dev/null 2>&1; then
     lsb_release -cs
   else
@@ -206,7 +206,7 @@ get_codename() {
     echo "${UBUNTU_CODENAME:-jammy}"
   fi
 }
-fix_apt_repos() {
+fix_apt_repos(){
   local host_arch foreign arches codename
   host_arch="$(dpkg --print-architecture)"
   foreign="$(dpkg --print-foreign-architectures || true)"
@@ -221,7 +221,7 @@ fix_apt_repos() {
 # --- Managed by Blockcast installer ---
 EOF'"
 
-  add_archive_amd64() {
+  add_archive_amd64(){
     cat <<EOF
 deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${codename} main restricted universe multiverse
 deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${codename}-updates main restricted universe multiverse
@@ -229,7 +229,7 @@ deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${codename}-backports main res
 deb [arch=amd64] http://security.ubuntu.com/ubuntu ${codename}-security main restricted universe multiverse
 EOF
   }
-  add_ports_arm64() {
+  add_ports_arm64(){
     cat <<EOF
 deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${codename} main restricted universe multiverse
 deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${codename}-updates main restricted universe multiverse
@@ -280,78 +280,66 @@ setup_ufw(){
 }
 
 # -----------------------------
-# Compose fetch / patch
+# Compose fetch / override / validate
 # -----------------------------
-fetch_compose(){
+ensure_compose_home(){
   info "$(tr fetch)"; hr
-  mkdir -p "$BC_DIR"; cd "$BC_DIR"
-  rm -rf "$BC_DIR/.tmp_repo" 2>/dev/null || true
-  git clone --depth 1 "$REPO_URL" "$BC_DIR/.tmp_repo" >/dev/null 2>&1 || true
-  if [[ -f "$BC_DIR/.tmp_repo/docker-compose.yml" ]]; then
-    cp "$BC_DIR/.tmp_repo/docker-compose.yml" "$COMPOSE_FILE"
-    ok "$(tr repo_ok)"
-  else
-    err "Не найден docker-compose.yml в официальном репозитории."
-    exit 1
+  mkdir -p "$COMPOSE_HOME"
+  ok "$(tr compose_home_ready) $COMPOSE_HOME"
+
+  # migrate old layout if present
+  if [[ -f "$OLD_DIR/docker-compose.yml" && ! -f "$COMPOSE_FILE" ]]; then
+    info "$(tr migrated_old)"
+    mv "$OLD_DIR/docker-compose.yml" "$COMPOSE_FILE"
   fi
-  rm -rf "$BC_DIR/.tmp_repo" || true
 
-  read -rp "${cBold}$(tr ask_port)${c0} [${HOST_PORT}] " ans
-  HOST_PORT="${ans:-$HOST_PORT}"
-
-  cat > "$ENV_FILE" <<EOF
-HOST_PORT=${HOST_PORT}
-CONTAINER_PORT=${CONTAINER_PORT}
-EOF
-
-  info "$(tr patch_ports)"
-
-  # 1) если у blockcastd нет секции ports — добавим
-  if grep -qE '^[[:space:]]*blockcastd:' "$COMPOSE_FILE"; then
-    if ! awk '/^[[:space:]]*blockcastd:/{f=1} f && /^[[:space:]]*ports:/{p=1} f && /^[^[:space:]]/{f=0} END{exit !(p)}' "$COMPOSE_FILE"; then
-      # вставить ports сразу после 'blockcastd:'
-      awk '
-        BEGIN{ins=0}
-        /^[[:space:]]*blockcastd:/ && ins==0 {print; print "    ports:\n      - \"'"${HOST_PORT}"':'"${CONTAINER_PORT}"'\""; ins=1; next}
-        {print}
-      ' "$COMPOSE_FILE" > "$COMPOSE_FILE.tmp" && mv "$COMPOSE_FILE.tmp" "$COMPOSE_FILE"
+  # fetch base compose if absent
+  if [[ ! -f "$COMPOSE_FILE" ]]; then
+    if curl -fsSL "$REPO_RAW_YML" -o "$COMPOSE_FILE"; then
+      ok "$(tr repo_ok)"
     else
-      # есть ports — убедимся, что есть строка "*:8080"
-      if ! awk -v cp="$CONTAINER_PORT" '/^\s*blockcastd:/{f=1} f && /^\s*ports:/{p=1}
-           f&&p&&/^\s*[^- ]/{f=0;p=0}
-           f&&p&&/-\s*".*:'"$CONTAINER_PORT"'"/{found=1}
-           END{exit !(found)}' "$COMPOSE_FILE"; then
-        awk '/^\s*blockcastd:/{f=1} f&&/^\s*ports:/{p=1}
-             f&&p&&/^\s*[^- ]/{f=0;p=0}
-             {print}
-             f&&p&&!done&&/^\s*ports:/{print "      - \"'"${HOST_PORT}"':'"${CONTAINER_PORT}"'\""; done=1}
-            ' "$COMPOSE_FILE" > "$COMPOSE_FILE.tmp" && mv "$COMPOSE_FILE.tmp" "$COMPOSE_FILE"
-      fi
-      # заменить существующее Х:8080 на наш HOST_PORT:8080
-      sed -i -E "s/(-\s*\")([0-9]+)(:${CONTAINER_PORT}\")/\\1${HOST_PORT}\\3/g" "$COMPOSE_FILE"
+      err "$(tr repo_fail)"
+      exit 1
     fi
   else
-    warn "Сервис 'blockcastd' не найден — пропуск патча портов."
+    ok "$(tr repo_ok)"
+  fi
+}
+
+write_override(){
+  # ask port (once here or when changing)
+  read -rp "${cBold}$(tr ask_port)${c0} [${HOST_PORT}] " _ans
+  HOST_PORT="${_ans:-$HOST_PORT}"
+
+  info "$(tr override_write)"
+  # check if watchtower exists in base compose
+  local has_wt=0
+  if grep -qE '^[[:space:]]*watchtower:' "$COMPOSE_FILE"; then has_wt=1; fi
+
+  cat > "$OVERRIDE_FILE" <<EOF
+services:
+  blockcastd:
+    ports:
+      - "${HOST_PORT}:${CONTAINER_PORT}"
+EOF
+
+  if [[ "$has_wt" -eq 1 ]]; then
+    # ensure watchtower has no published ports
+    cat >> "$OVERRIDE_FILE" <<'EOF'
+  watchtower:
+    ports: []
+EOF
+  else
+    info "$(tr override_skip_wt)"
   fi
 
-  # 2) убрать возможный проброс порта у watchtower (8443:8080) — чтобы не путать
-  if awk '/^\s*watchtower:/{f=1} f&&/^\s*ports:/{p=1} f&&p&&/^\s*[^- ]/{f=0;p=0} f&&p&&/-\s*".*:8080"/{exit 0} END{exit 1}' "$COMPOSE_FILE"; then
-    info "$(tr remove_watchtower_port)"
-    # удаляем строки вида  - "xxxx:8080" в секции watchtower->ports
-    awk '
-      /^\s*watchtower:/{f=1}
-      f && /^\s*ports:/{p=1}
-      f && p && /^\s*[^- ]/{f=0; p=0}
-      { 
-        if (f && p && $0 ~ /- *".*:8080"/) next; 
-        print 
-      }
-    ' "$COMPOSE_FILE" > "$COMPOSE_FILE.tmp" && mv "$COMPOSE_FILE.tmp" "$COMPOSE_FILE"
-  fi
+  ok "$(tr override_ok)"
+}
 
-  # Валидация compose
-  if ! docker compose -f "$COMPOSE_FILE" config >/dev/null 2>&1; then
-    docker compose -f "$COMPOSE_FILE" config || true
+validate_compose(){
+  info "$(tr validate)"
+  if ! (cd "$COMPOSE_HOME" && docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config >/dev/null 2>&1); then
+    (cd "$COMPOSE_HOME" && docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config || true)
     err "$(tr compose_invalid)"
     exit 1
   fi
@@ -363,36 +351,41 @@ EOF
 conflicts_cleanup(){
   info "$(tr conflicts)"
   docker rm -f blockcastd control_proxy beacond watchtower 2>/dev/null || true
+
+  info "$(tr port_conflicts)"
+  docker ps --filter "publish=${HOST_PORT}" -q | xargs -r docker rm -f || true
 }
 start_services(){
-  cd "$BC_DIR" || { err "Каталог не найден: $BC_DIR"; return 1; }
+  [[ -d "$COMPOSE_HOME" ]] || { err "$(tr dir_missing) $COMPOSE_HOME"; return 1; }
   conflicts_cleanup
+  setup_ufw
   info "$(tr start)"
-  docker compose up -d
+  (cd "$COMPOSE_HOME" && docker compose up -d)
   ok "$(tr started)"
 }
 restart_services(){
-  cd "$BC_DIR" || { err "Каталог не найден: $BC_DIR"; return 1; }
+  [[ -d "$COMPOSE_HOME" ]] || { err "$(tr dir_missing) $COMPOSE_HOME"; return 1; }
+  setup_ufw
   info "$(tr restart)"
-  docker compose up -d --force-recreate
+  (cd "$COMPOSE_HOME" && docker compose up -d --force-recreate)
   ok "$(tr restarted)"
 }
 show_logs(){
-  cd "$BC_DIR" || { err "Каталог не найден: $BC_DIR"; return 1; }
+  [[ -d "$COMPOSE_HOME" ]] || { err "$(tr dir_missing) $COMPOSE_HOME"; return 1; }
   info "$(tr logs)"
-  docker compose logs -fn 500
+  (cd "$COMPOSE_HOME" && docker compose logs -fn 500)
 }
 show_status(){
-  cd "$BC_DIR" || { err "Каталог не найден: $BC_DIR"; return 1; }
+  [[ -d "$COMPOSE_HOME" ]] || { err "$(tr dir_missing) $COMPOSE_HOME"; return 1; }
   echo "$(tr status)"
-  docker compose ps -a
+  (cd "$COMPOSE_HOME" && docker compose ps -a)
 }
 
 # -----------------------------
 # Registration (blockcastd init)
 # -----------------------------
 register_beacon(){
-  cd "$BC_DIR" || { err "Каталог не найден: $BC_DIR"; return 1; }
+  [[ -d "$COMPOSE_HOME" ]] || { err "$(tr dir_missing) $COMPOSE_HOME"; return 1; }
   info "$(tr reg)"
   local j; j=$(curl -s https://ipinfo.io || true)
   if [[ -n "$j" ]]; then
@@ -401,9 +394,10 @@ register_beacon(){
   fi
   local TMP; TMP=$(mktemp)
   set +e
-  docker compose exec blockcastd blockcastd init | tee "$TMP"
+  (cd "$COMPOSE_HOME" && docker compose exec blockcastd blockcastd init) | tee "$TMP"
   local ec=$?
   set -e
+
   local HWID CK URL
   HWID=$(grep -E '^Hardware ID:' -A1 "$TMP" | tail -n1 | tr -d '\r\n' || true)
   CK=$(grep -E '^Challenge Key:' -A1 "$TMP" | tail -n1 | tr -d '\r\n' || true)
@@ -415,7 +409,7 @@ register_beacon(){
   [[ -n "$URL"  ]] && printf "%b%s%b %b%s%b\n" "$cBold" "$(tr reg_url)" "$c0" "$cB" "$URL" "$c0"
 
   echo
-  echo "${cDim}Важно: сохраните приватный ключ устройства (${KEY_FILE} или ${LEGACY_KEY}).${c0}"
+  echo "${cDim}Важно: сохраните приватный ключ (${KEY_FILE} или ${LEGACY_KEY}).${c0}"
   return $ec
 }
 
@@ -435,57 +429,17 @@ backup_key(){
     chmod 600 "$BACKUP_DIR/gateway.key.$ts" || true
     ok "$(tr backup_done) $BACKUP_DIR/gateway.key.$ts"
   else
-    err "$(tr backup_miss)"
-    return 1
+    err "$(tr backup_miss)"; return 1
   fi
 }
 
 # -----------------------------
-# Change port (repatch + restart)
+# Change port (rewrite override + restart)
 # -----------------------------
 change_port(){
-  cd "$BC_DIR" || { err "Каталог не найден: $BC_DIR"; return 1; }
-  read -rp "${cBold}$(tr ask_port)${c0} [${HOST_PORT}] " ans
-  HOST_PORT="${ans:-$HOST_PORT}"
-  sed -i -E "s/^HOST_PORT=.*/HOST_PORT=${HOST_PORT}/" "$ENV_FILE" 2>/dev/null || true
-
-  info "$(tr patch_ports)"
-  if grep -qE '^[[:space:]]*blockcastd:' "$COMPOSE_FILE"; then
-    # если нет ports — добавим
-    if ! awk '/^[[:space:]]*blockcastd:/{f=1} f && /^[[:space:]]*ports:/{p=1} f && /^[^[:space:]]/{f=0} END{exit !(p)}' "$COMPOSE_FILE"; then
-      awk '
-        BEGIN{ins=0}
-        /^[[:space:]]*blockcastd:/ && ins==0 {print; print "    ports:\n      - \"'"${HOST_PORT}"':'"${CONTAINER_PORT}"'\""; ins=1; next}
-        {print}
-      ' "$COMPOSE_FILE" > "$COMPOSE_FILE.tmp" && mv "$COMPOSE_FILE.tmp" "$COMPOSE_FILE"
-    else
-      # заменить существующую публикацию на новый HOST_PORT
-      sed -i -E "s/(-\s*\")([0-9]+)(:${CONTAINER_PORT}\")/\\1${HOST_PORT}\\3/g" "$COMPOSE_FILE"
-      # если вдруг отсутствовала строка — добавим
-      if ! grep -qE "^[[:space:]]*-[[:space:]]*\"${HOST_PORT}:${CONTAINER_PORT}\"" "$COMPOSE_FILE"; then
-        awk '/^\s*blockcastd:/{f=1} f&&/^\s*ports:/{p=1}
-             f&&p&&/^\s*[^- ]/{f=0;p=0}
-             {print}
-             f&&p&&!done&&/^\s*ports:/{print "      - \"'"${HOST_PORT}"':'"${CONTAINER_PORT}"'\""; done=1}
-            ' "$COMPOSE_FILE" > "$COMPOSE_FILE.tmp" && mv "$COMPOSE_FILE.tmp" "$COMPOSE_FILE"
-      fi
-    fi
-  else
-    warn "Сервис 'blockcastd' не найден — пропуск патча портов."
-  fi
-
-  # убрать публикацию у watchtower, если есть
-  if awk '/^\s*watchtower:/{f=1} f&&/^\s*ports:/{p=1} f&&p&&/^\s*[^- ]/{f=0;p=0} f&&p&&/-\s*".*:8080"/{exit 0} END{exit 1}' "$COMPOSE_FILE"; then
-    info "$(tr remove_watchtower_port)"
-    awk '
-      /^\s*watchtower:/{f=1}
-      f && /^\s*ports:/{p=1}
-      f && p && /^\s*[^- ]/{f=0; p=0}
-      { if (f && p && $0 ~ /- *".*:8080"/) next; print }
-    ' "$COMPOSE_FILE" > "$COMPOSE_FILE.tmp" && mv "$COMPOSE_FILE.tmp" "$COMPOSE_FILE"
-  fi
-
-  setup_ufw
+  [[ -d "$COMPOSE_HOME" ]] || { err "$(tr dir_missing) $COMPOSE_HOME"; return 1; }
+  write_override
+  validate_compose
   restart_services
 }
 
@@ -494,11 +448,11 @@ change_port(){
 # -----------------------------
 remove_all(){
   read -rp "$(tr remove) " CONF
-  [[ "$CONF" == "yes" ]] || { warn "Отменено."; return 0; }
-  (cd "$BC_DIR" 2>/dev/null && docker compose down -v --remove-orphans) || true
+  [[ "$CONF" == "yes" ]] || { warn "Canceled."; return 0; }
+  (cd "$COMPOSE_HOME" 2>/dev/null && docker compose down -v --remove-orphans) || true
   docker rm -f blockcastd control_proxy beacond watchtower 2>/dev/null || true
   docker images 'blockcast/cdn_gateway_go' -q | xargs -r docker rmi -f
-  rm -rf "$BC_DIR"
+  rm -rf "$COMPOSE_HOME"
   ok "$(tr removed)"
 }
 
@@ -508,6 +462,7 @@ remove_all(){
 main_menu(){
   choose_lang
   info "$(tr need_root)"; hr
+
   while true; do
     clear; logo; hr
     echo -e "${cBold}${cM}$(tr menu)${c0} ${cDim}(v${SCRIPT_VERSION})${c0}\n"
@@ -529,7 +484,7 @@ main_menu(){
     case "${ch:-}" in
       1) install_deps; install_docker ;;
       2) setup_ufw ;;
-      3) fetch_compose ;;
+      3) ensure_compose_home; write_override; validate_compose ;;
       4) start_services ;;
       5) restart_services ;;
       6) register_beacon ;;
